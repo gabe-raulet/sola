@@ -13,34 +13,31 @@
 
 int read_input_wave_file(const char *fname, float **sig, int *chans, int *samps, int *rate);
 int write_output_wave_file(const char *fname, const float *sig, int chans, int samps, int rate);
-int sola(float *insig, int insamps, float **outsig, int *outsamps, int N, int Sa, double alpha, int cor);
+int sola(float *insig, int insamps, float **outsig, int *outsamps, int N, int Sa, double alpha);
 
 int main(int argc, char *argv[])
 {
     int Sa = 256; /* analysis hop size */
     int N = 2048; /* block length */
     double alpha = 1.; /* time scaling factor */
-    int cor = 0;
 
     const char *infile = NULL;
     const char *outfile = NULL;
 
     int c;
-    while ((c = getopt(argc, argv, "i:o:S:N:a:Ch")) >= 0)
+    while ((c = getopt(argc, argv, "i:o:S:N:a:h")) >= 0)
     {
         if      (c == 'i') infile = optarg;
         else if (c == 'o') outfile = optarg;
         else if (c == 'S') Sa = atoi(optarg);
         else if (c == 'N') N = atoi(optarg);
         else if (c == 'a') alpha = atof(optarg);
-        else if (c == 'C') cor = 1;
         else if (c == 'h')
         {
             fprintf(stderr, "Usage: %s [options] -i <input.wav> -o <output.wav>\n", argv[0]);
             fprintf(stderr, "Options: -S INT   analysis hop size [%d]\n", Sa);
             fprintf(stderr, "         -N INT   block length [%d]\n", N);
             fprintf(stderr, "         -a FLOAT time scaling factor [%.2f]\n", alpha);
-            fprintf(stderr, "         -C       use auto-correlation\n");
             fprintf(stderr, "         -h       help message\n");
             return -1;
         }
@@ -65,7 +62,7 @@ int main(int argc, char *argv[])
 
     assert((channels == 1));
 
-    sola(insig, insamps, &outsig, &outsamps, N, Sa, alpha, cor);
+    sola(insig, insamps, &outsig, &outsamps, N, Sa, alpha);
 
     if (err < 0)
     {
@@ -139,62 +136,7 @@ int write_output_wave_file(const char *fname, const float *sig, int chans, int s
     return 0;
 }
 
-void correlate(float *r, float *x1, float *x2, int L)
-{
-    for (int k = 0; k < L; ++k)
-    {
-        double val = 0.;
-
-        for (int n = 0; n < L-k; ++n)
-        {
-            val += x1[n]*x2[n+k];
-        }
-
-        r[k] = val/L;
-    }
-}
-
-int argmax(float *r, int L)
-{
-    int i;
-    int rmax=0;
-    double v = DBL_MIN;
-
-    for (i = 0; i < L; ++i)
-    {
-        if (r[i] > v)
-        {
-            v = r[i];
-            rmax = i;
-        }
-    }
-
-    return rmax;
-}
-
-void overlap(float *yp, float *xp, int N, int L)
-{
-    double cur = 0;
-    double delta = 1./L;
-
-    int i = 0;
-
-    while (i < L)
-    {
-        yp[i] *= (1. - cur);
-        yp[i] += cur*xp[i];
-        cur += delta;
-        i++;
-    }
-
-    while (i < N)
-    {
-        yp[i] = xp[i];
-        i++;
-    }
-}
-
-int sola(float *insig, int insamps, float **outsig, int *outsamps, int N, int Sa, double alpha, int cor)
+int sola(float *insig, int insamps, float **outsig, int *outsamps, int N, int Sa, double alpha)
 {
     if (!insig || !outsig || !outsamps)
         return -1;
@@ -221,13 +163,45 @@ int sola(float *insig, int insamps, float **outsig, int *outsamps, int N, int Sa
 
     for (int ni = 1; ni < M; ++ni)
     {
-        if (cor)
+        double maxval = DBL_MIN;
+
+        for (int k = 0; k < L; ++k)
         {
-            correlate(r, yp, xp, L);
-            km = argmax(r, L);
+            double val = 0.;
+
+            for (int j = 0; j < L-k; ++j)
+            {
+                val += yp[j]*xp[j+k];
+            }
+
+            if (val > maxval)
+            {
+                km = k;
+                maxval = val;
+            }
         }
 
-        overlap(yp+km, xp, N, L);
+        float *ypp = yp+km;
+        float *xpp = xp;
+
+        double cur = 0;
+        double delta = 1./L;
+
+        int i = 0;
+
+        while (i < L)
+        {
+            ypp[i] *= (1. - cur);
+            ypp[i] += cur*xpp[i];
+            cur += delta;
+            i++;
+        }
+
+        while (i < N)
+        {
+            ypp[i] = xpp[i];
+            i++;
+        }
 
         yp += Ss;
         xp += Sa;
