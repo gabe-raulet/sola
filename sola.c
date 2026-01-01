@@ -13,7 +13,7 @@
 
 int read_input_wave_file(const char *fname, float **sig, int *chans, int *samps, int *rate);
 int write_output_wave_file(const char *fname, const float *sig, int chans, int samps, int rate);
-int sola(float *insig, int insamps, float **outsig, int *outsamps, int N, int Sa, double alpha);
+int sola(float *insig, int insamps, int chans, float **outsig, int *outsamps, int N, int Sa, double alpha);
 
 int main(int argc, char *argv[])
 {
@@ -60,9 +60,7 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    assert((channels == 1));
-
-    sola(insig, insamps, &outsig, &outsamps, N, Sa, alpha);
+    err = sola(insig, insamps, channels, &outsig, &outsamps, N, Sa, alpha);
 
     if (err < 0)
     {
@@ -136,7 +134,7 @@ int write_output_wave_file(const char *fname, const float *sig, int chans, int s
     return 0;
 }
 
-int sola(float *insig, int insamps, float **outsig, int *outsamps, int N, int Sa, double alpha)
+int sola(float *insig, int insamps, int chans, float **outsig, int *outsamps, int N, int Sa, double alpha)
 {
     if (!insig || !outsig || !outsamps)
         return -1;
@@ -148,63 +146,66 @@ int sola(float *insig, int insamps, float **outsig, int *outsamps, int N, int Sa
     int n = N + (M-1)*Sa;
     int m = N + (M-1)*Ss;
 
-    float *x = calloc(n, sizeof(float));
-    float *y = calloc(m, sizeof(float));
+    float *x = calloc(chans*n, sizeof(float));
+    float *y = calloc(chans*m, sizeof(float));
     float *r = malloc(L*sizeof(float));
 
-    memcpy(x, insig, insamps*sizeof(float));
-    memcpy(y, x, N*sizeof(float));
+    memcpy(x, insig, chans*insamps*sizeof(float));
+    memcpy(y, x, chans*N*sizeof(float));
 
-    float *xp = x + Sa;
-    float *yp = y + Ss;
+    float *xp = x + chans*Sa;
+    float *yp = y + chans*Ss;
 
     int km = 0;
     float *xl1, *xl2;
 
     for (int ni = 1; ni < M; ++ni)
     {
-        double maxval = DBL_MIN;
-
-        for (int k = 0; k < L; ++k)
+        for (int ch = 0; ch < chans; ++ch)
         {
-            double val = 0.;
+            double maxval = DBL_MIN;
 
-            for (int j = 0; j < L-k; ++j)
+            for (int k = 0; k < L; ++k)
             {
-                val += yp[j]*xp[j+k];
+                double val = 0.;
+
+                for (int j = 0; j < L-k; ++j)
+                {
+                    val += yp[chans*j+ch]*xp[chans*(j+k)+ch];
+                }
+
+                if (val > maxval)
+                {
+                    km = k;
+                    maxval = val;
+                }
             }
 
-            if (val > maxval)
+            float *ypp = yp + chans*km;
+            float *xpp = xp;
+
+            double cur = 0;
+            double delta = 1./L;
+
+            int i = 0;
+
+            while (i < L)
             {
-                km = k;
-                maxval = val;
+                ypp[chans*i+ch] *= (1. - cur);
+                ypp[chans*i+ch] += cur*xpp[chans*i+ch];
+                cur += delta;
+                i++;
+            }
+
+            while (i < N)
+            {
+                ypp[chans*i+ch] = xpp[chans*i+ch];
+                i++;
             }
         }
 
-        float *ypp = yp+km;
-        float *xpp = xp;
-
-        double cur = 0;
-        double delta = 1./L;
-
-        int i = 0;
-
-        while (i < L)
-        {
-            ypp[i] *= (1. - cur);
-            ypp[i] += cur*xpp[i];
-            cur += delta;
-            i++;
-        }
-
-        while (i < N)
-        {
-            ypp[i] = xpp[i];
-            i++;
-        }
-
-        yp += Ss;
-        xp += Sa;
+        yp += chans*Ss;
+        xp += chans*Sa;
     }
 
     *outsig = y;
