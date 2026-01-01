@@ -13,33 +13,34 @@
 
 int read_input_wave_file(const char *fname, float **sig, int *chans, int *samps, int *rate);
 int write_output_wave_file(const char *fname, const float *sig, int chans, int samps, int rate);
-
-/* int sola(float *insig, int insamps, float **outsig, int *outsamps, int Sa, int N, double alpha); */
-int sola(float *insig, int insamps, float **outsig, int *outsamps, int N, int Sa, double alpha);
+int sola(float *insig, int insamps, float **outsig, int *outsamps, int N, int Sa, double alpha, int cor);
 
 int main(int argc, char *argv[])
 {
     int Sa = 256; /* analysis hop size */
     int N = 2048; /* block length */
     double alpha = 1.; /* time scaling factor */
+    int cor = 0;
 
     const char *infile = NULL;
     const char *outfile = NULL;
 
     int c;
-    while ((c = getopt(argc, argv, "i:o:S:N:a:h")) >= 0)
+    while ((c = getopt(argc, argv, "i:o:S:N:a:Ch")) >= 0)
     {
         if      (c == 'i') infile = optarg;
         else if (c == 'o') outfile = optarg;
         else if (c == 'S') Sa = atoi(optarg);
         else if (c == 'N') N = atoi(optarg);
         else if (c == 'a') alpha = atof(optarg);
+        else if (c == 'C') cor = 1;
         else if (c == 'h')
         {
             fprintf(stderr, "Usage: %s [options] -i <input.wav> -o <output.wav>\n", argv[0]);
             fprintf(stderr, "Options: -S INT   analysis hop size [%d]\n", Sa);
             fprintf(stderr, "         -N INT   block length [%d]\n", N);
             fprintf(stderr, "         -a FLOAT time scaling factor [%.2f]\n", alpha);
+            fprintf(stderr, "         -C       use auto-correlation\n");
             fprintf(stderr, "         -h       help message\n");
             return -1;
         }
@@ -64,10 +65,7 @@ int main(int argc, char *argv[])
 
     assert((channels == 1));
 
-    /* sola(insig, insamps, &outsig, &outsamps); */
-    sola(insig, insamps, &outsig, &outsamps, N, Sa, alpha);
-/* int sola(float *insig, int insamps, float **outsig, int *outsamps, int N, int Sa, double alpha); */
-//int sola(float *insig, int insamps, float **outsig, int *outsamps)
+    sola(insig, insamps, &outsig, &outsamps, N, Sa, alpha, cor);
 
     if (err < 0)
     {
@@ -196,15 +194,13 @@ void overlap(float *yp, float *xp, int N, int L)
     }
 }
 
-int sola(float *insig, int insamps, float **outsig, int *outsamps, int N, int Sa, double alpha)
+int sola(float *insig, int insamps, float **outsig, int *outsamps, int N, int Sa, double alpha, int cor)
 {
     if (!insig || !outsig || !outsamps)
         return -1;
 
     int Ss = (int)(Sa*alpha);
     int L = (int)(256*(alpha/2.));
-    /* int Ss = 512; */
-    /* int L = 128; */
     int M = (insamps + Sa - 1) / Sa;
 
     int n = N + (M-1)*Sa;
@@ -212,44 +208,30 @@ int sola(float *insig, int insamps, float **outsig, int *outsamps, int N, int Sa
 
     float *x = calloc(n, sizeof(float));
     float *y = calloc(m, sizeof(float));
+    float *r = malloc(L*sizeof(float));
 
     memcpy(x, insig, insamps*sizeof(float));
-
-    /*
-     * Step 1: Determine blocks x1 and x2
-     * Step 2: Determine interval segments xL1 and xL2
-     */
-
     memcpy(y, x, N*sizeof(float));
 
     float *xp = x + Sa;
     float *yp = y + Ss;
 
+    int km = 0;
+    float *xl1, *xl2;
+
     for (int ni = 1; ni < M; ++ni)
     {
-        overlap(yp, xp, N, L);
+        if (cor)
+        {
+            correlate(r, yp, xp, L);
+            km = argmax(r, L);
+        }
+
+        overlap(yp+km, xp, N, L);
 
         yp += Ss;
         xp += Sa;
     }
-
-    //float *r = malloc(L*sizeof(float));
-
-
-    //int km;
-    //float *xl1, *xl2;
-
-    //for (int ni = 1; ni < M; ++ni)
-    //{
-    //    xl1 = x1 + N - L;
-    //    xl2 = x2;
-
-    //    correlate(r, xl1, xl2, L);
-    //    km = argmax(r, L);
-
-    //    fade_out(y1+N-L, L);
-    //    x1 += Sa, x2 += Sa, y1 += Ss, y2 += Ss;
-    //}
 
     *outsig = y;
     *outsamps = m;
